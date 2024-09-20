@@ -1,0 +1,20 @@
+services:
+  application:
+    image: ${SYSTEM_NAME}/application:${SYSTEM_VERSION}
+    pull_policy: never
+
+    profiles:
+      - default
+      - dev
+
+    ports:
+      - ${SERVICE_PORT}:${SERVICE_PORT}
+
+    volumes:
+      - ${PROFILE_DATA}/input:/opt/comfyui/input
+      - ${PROFILE_DATA}/output:/opt/comfyui/output
+      - ${MODEL_DATA}:/opt/comfyui/models
+
+    working_dir: /opt/comfyui
+
+    command: ["python3", "main.py", "--listen", "--port", "${SERVICE_PORT}", "--disable-cuda-malloc", "--gpu-only"]

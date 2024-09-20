@@ -1,0 +1,488 @@
+meta:
+  sos_version: v0.0.1
+  system_name: sos-comfyui
+  system_version: v0.2.2
+  system_internal: internal
+  system_description: The most powerful and modular stable diffusion GUI and backend.
+  profile: default
+
+namespace:
+  git_root: https://github.com
+  branch_target: v0.2.2
+  org_target: vtp-one
+
+  comfyui_git:
+    target: https://github.com/comfyanonymous/ComfyUI
+    tag: v0.2.2
+
+  runtime:
+    compose_file: docker-compose.yaml
+    profile: default_profile
+    model_data: null
+    profile_data: null
+    protocol: http
+    host: 0.0.0.0
+    port: "42000"
+
+  builder:
+    git_target: ${namespace.org_target}/sos-comfyui-builder
+    remote_branch: ${namespace.branch_target}
+    working_dir: null
+
+    exists:
+      label: check builder working dir exists
+      tool: filesystem.path_exists
+      params:
+        raise_exc: True
+      context_map:
+        - label: get builder working dir
+          result: target
+          data: namespace.builder.working_dir
+
+    condition:
+      label: builder namespace working directory exists
+      ctx_key: namespace.builder.working_dir
+      valid: null
+      is_inverse: True
+      raise_exc: False
+
+  application:
+    git_target: ${namespace.comfyui_git.target}
+    remote_branch: ${namespace.comfyui_git.tag}
+    working_dir: null
+    exists:
+      label: check application working dir exists
+      tool: filesystem.path_exists
+      params:
+        raise_exc: True
+      context_map:
+        - label: get application working dir
+          result: target
+          data: namespace.application.working_dir
+
+    condition:
+      label: application namespace working directory exists
+      ctx_key: namespace.application.working_dir
+      valid: null
+      is_inverse: True
+      raise_exc: False
+
+common: null
+
+service:
+  dev_mode: True
+  local_data: True
+
+action:
+  sos_help:
+    tool: terminal.print_object
+    params:
+      horizontal_rule: True
+      obj:
+        - SOS-COMFYUI: ${meta.system_description}
+        - Install:
+          - sos-toolkit setup
+          - sos-toolkit install
+        - Dev:
+          - sos-toolkit setup
+          - sos-toolkit dev
+          - sos-toolkit build
+        - Run:
+          - sos-toolkit up
+        - Stop:
+          - sos-toolkit down
+        - Config:
+          - runtime_profile:
+            - "Change runtime profile for output data"
+            - "sos-toolkit config --target=runtime_profile"
+          - model_data:
+            - "Change model data location"
+            - "sos-toolkit config --target=model_data"
+
+  sos_setup:
+    local_data: ${service.local_data.action.setup}
+
+  sos_config:
+    runtime_profile:
+      label: set runtime profile
+      tool: terminal.input_prompt
+      params:
+        prompt: "Input Runtime Profile Name: "
+      result_map:
+        - label: set runtime_profile
+          result: namespace.runtime.profile
+          data: input
+
+    model_data:
+      label: set model_data location
+      tool: terminal.input_prompt
+      params:
+        prompt: "Input Model Data Path: "
+      result_map:
+        - label: set model_data
+          result: namespace.runtime.model_data
+          data: input
+
+    comfyui_tag:
+      label: set comfyui git repo target tag
+      tool: terminal.input_prompt
+      params:
+        prompt: "Input Target Tag: "
+      result_map:
+        - label: set repo tag
+          result: namespace.comfyui_git.tag
+          data: input
+      callbacks:
+        - label: check if repo exists
+          tool: context.runtime_break
+          params:
+            info_pass: PULLING TARGET BRANCH
+            info_break: LOCAL REPO DOES NOT EXIST YET
+            resolve:
+              - ${namespace.application.condition}
+            qualifier: none
+        - label: git pull
+          tool: git.repo_fetch
+          context_map:
+            - label: get working dir
+              result: working_dir
+              data: namespace.application.working_dir
+        - label: git checkout
+          tool: git.repo_checkout
+          context_map:
+            - label: get working dir
+              result: working_dir
+              data: namespace.application.working_dir
+            - label: get target
+              result: target
+              data: namespace.comfyui_git.tag
+
+  sos_dev:
+    model_data:
+      model_data_break:
+        tool: context.runtime_break
+        params:
+          info_pass: "NO MODEL_DATA DIRECTORY PROVIDED - CREATING ONE IN LOCAL_DATA"
+          info_break: "USING MODEL_DATA DIRECTORY: ${namespace.runtime.model_data}"
+          resolve:
+            - label: check if model_data already provided
+              ctx_key: namespace.runtime.model_data
+              valid: null
+              is_inverse: True
+              raise_exc: False
+      target_model_data:
+        label: generate model data directory
+        tool: context.ctx_set
+        params:
+          ctx_key: __TARGET__
+          overwrite: True
+        context_map:
+          - label: generate create_child target
+            result: obj
+            data:
+              - target: folder
+                source: null
+                default: model_data
+              - target: name
+                source: null
+                default: model_data
+      create_model_data: ${service.local_data.action.create_child}
+      set_model_data:
+        label: set model_data location
+        tool: context.ctx_set
+        params:
+          ctx_key: namespace.runtime.model_data
+          overwrite: True
+        context_map:
+          - label: get model_data location
+            result: obj
+            data: service.local_data.namespace.child_map.model_data
+
+    builder:
+      label: builder git clone
+      tool: git.repo_clone
+      context_map:
+        - label: get builder remote target
+          result: remote_target
+          data:
+            - source: namespace.git_root
+              target: root
+            - source: namespace.builder.git_target
+              target: target
+          format_string: "{root}/{target}.git"
+        - label: get builder branch
+          result: remote_branch
+          data: namespace.builder.remote_branch
+        - label: get local target
+          result: local_target
+          data:
+            - source: meta.system_internal
+              target: root
+            - source: null
+              target: local
+              default: builder
+          path_join: True
+      result_map:
+        - label: set output working dir
+          result: namespace.builder.working_dir
+          data: working_dir
+
+    application:
+      label: application git clone
+      tool: git.repo_clone
+      context_map:
+        - label: get application remote target
+          result: remote_target
+          data:
+            - source: namespace.application.git_target
+              target: target
+          format_string: "{target}.git"
+        - label: get application branch
+          result: remote_branch
+          data: namespace.application.remote_branch
+        - label: get local target
+          result: local_target
+          data:
+            - source: meta.system_internal
+              target: root
+            - source: null
+              target: local
+              default: application
+          path_join: True
+      result_map:
+        - label: set output working dir
+          result: namespace.application.working_dir
+          data: working_dir
+
+    dev_enable: ${service.dev_mode.action.enable}
+
+  sos_build:
+    builder_exists: ${namespace.builder.exists}
+
+    application_exists: ${namespace.application.exists}
+
+    backend_buildx:
+      tool: docker.buildx_bake
+      params:
+        bake_file: bakefile.hcl
+        bake_target: default
+      context_map:
+        - label: get builder working directory
+          result: context_dir
+          data: namespace.builder.working_dir
+        - label: get docker namespace
+          result: namespace
+          data: meta.system_name
+        - label: generate build variables
+          result: variables
+          data:
+            - label: get comfyui working dir
+              result: COMFYUI_WORKING_DIR
+              data: namespace.application.working_dir
+
+  sos_install:
+    model_data: ${action.sos_dev.model_data}
+
+    git_pull_builder: ${action.sos_dev.builder}
+
+    git_pull_application: ${action.sos_dev.application}
+
+    builder_bakex: ${action.sos_build}
+
+  sos_up:
+    profile_data:
+      profile_data_target:
+        label: generate profile data directory
+        tool: context.ctx_set
+        params:
+          ctx_key: __TARGET__
+          overwrite: True
+        context_map:
+          - label: get profile target
+            result: obj
+            data:
+              - target: folder
+                source: namespace.runtime.profile
+                default: default_profile
+              - target: name
+                source: null
+                default: runtime_profile
+      profile_data_create: ${service.local_data.action.create_child}
+      profile_data_set:
+        label: set profile_data location
+        tool: context.ctx_set
+        params:
+          ctx_key: namespace.runtime.profile_data
+          overwrite: True
+        context_map:
+          - label: get profile_data target
+            result: obj
+            data: service.local_data.namespace.child_map.runtime_profile
+
+    compose:
+      tool: docker.compose_up
+      context_map:
+        - label: get profile
+          result: profile
+          data: meta.profile
+        - label: generate compose file target
+          result: file
+          data:
+            - source: meta.system_path
+              target: system_path
+            - source: namespace.runtime.compose_file
+              target: compose_file
+          path_join: True
+        - label: get project name
+          result: project_name
+          data: meta.system_name
+        - label: generate env_map
+          result: env_map
+          data:
+            - target: SYSTEM_NAME
+              source: meta.system_name
+            - target: SYSTEM_VERSION
+              source: meta.system_version
+            - target: SERVICE_PORT
+              source: namespace.runtime.port
+            - target: PROFILE_DATA
+              source: namespace.runtime.profile_data
+              default: /tmp/${meta.system_name}/profile_data
+            - target: MODEL_DATA
+              source: namespace.runtime.model_data
+              default: /tmp/${meta.system_name}/model_data
+            - target: APPLICATION_WORKING_DIR
+              source: namespace.application.working_dir
+              default: /tmp/${meta.system_name}/application_dir
+
+    service_address:
+      tool: terminal.print_object
+      params:
+        horizontal_rule: True
+      context_map:
+        - label: generate service address
+          result: obj
+          data:
+            - source: null
+              target: preamble
+              default: "COMFYUI SERVER RUNNING ON:"
+            - source: namespace.runtime.protocol
+              target: protocol
+            - source: namespace.runtime.host
+              target: host
+            - source: namespace.runtime.port
+              target: port
+          format_string: "{preamble} {protocol}://{host}:{port}"
+
+  sos_down:
+    compose:
+      tool: docker.compose_down
+      context_map:
+        - label: get project name
+          result: project_name
+          data: meta.system_name
+
+  sos_status:
+    root:
+      label: root git status
+      tool: git.repo_status
+      context_map:
+        - label: get working_dir
+          result: working_dir
+          data: meta.system_path
+
+    builder:
+      label: builder git status
+      tool: git.repo_status
+      condition:
+        - ${service.dev_mode.namespace.condition}
+        - ${namespace.builder.condition}
+      context_map:
+        - label: get working_dir
+          result: working_dir
+          data: namespace.builder.working_dir
+
+  sos_commit:
+    dev_mode: ${service.dev_mode.action.is_enabled_exc}
+    root:
+      label: root git commit
+      tool: git.repo_commit
+      context_map:
+        - label: get working_dir
+          result: working_dir
+          data: meta.system_path
+
+    builder:
+      label: builder git commit
+      tool: git.repo_commit
+      condition:
+        - ${namespace.builder.condition}
+      context_map:
+        - label: get working_dir
+          result: working_dir
+          data: namespace.builder.working_dir
+
+  sos_clean:
+    system_down: ${action.sos_down}
+
+    docker_image:
+      image_exists:
+        label: check image exists
+        tool: docker.image_exists
+        context_map:
+          - label: get image tag
+            result: target
+            data:
+              - source: meta.system_name
+                target: namespace
+              - source: meta.system_version
+                target: version
+            format_string: "{namespace}/application:{version}"
+        result_map:
+          - label: result to __TARGET__
+            result: __TARGET__
+            data: result
+      delete_image:
+        label: delete image if exists
+        tool: docker.image_delete
+        context_map:
+          - label: get image tag
+            result: target
+            data:
+              - source: meta.system_name
+                target: namespace
+              - source: meta.system_version
+                target: version
+            format_string: "{namespace}/application:{version}"
+        condition:
+          - label: if image exists
+            ctx_key: __TARGET__
+            valid: True
+            is_inverse: False
+            raise_exc: False
+
+    application_dir:
+      label: delete application
+      tool: filesystem.directory_delete
+      params:
+        ignore_errors: True
+      condition:
+        - ${namespace.application.condition}
+      context_map:
+        - label: get application working directory
+          result: target
+          data: namespace.application.working_dir
+
+    builder_dir:
+      label: delete builder
+      tool: filesystem.directory_delete
+      params:
+        ignore_errors: True
+      condition:
+        - ${namespace.builder.condition}
+      context_map:
+        - label: get builder working directory
+          result: target
+          data: namespace.builder.working_dir
+
+    local_data: ${service.local_data.action.clean}
